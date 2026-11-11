@@ -152,10 +152,32 @@ Revokes the session server-side and clears the cookie. `204`.
 `search` matches full name (case-insensitive substring) or normalised index
 number.
 
-`GET /api/admin/registrations/export?…same filters…` → `text/csv`, UTF-8 with
-BOM, columns `index_number,full_name,topic,registered_at`. Fields that begin with
-`= + - @` are prefixed with `'` to neutralise spreadsheet formula injection. Hard
-cap 10 000 rows.
+### `GET /api/admin/registrations/export?format=csv|xlsx&…same filters…`
+
+Exports exactly the rows the admin is currently looking at — `search`,
+`topic_id`, `sort` and `dir` all apply. Hard cap 10 000 rows. `format` defaults
+to `csv`; anything else is `422 validation_failed`.
+
+Both formats carry the columns `index_number, full_name, topic, registered_at`.
+
+**CSV** — `text/csv; charset=utf-8` with a UTF-8 BOM so Excel detects the
+encoding. Fields beginning with `= + - @` are prefixed with `'` to neutralise
+spreadsheet formula injection.
+
+**XLSX** — `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
+one `Registrations` sheet, bold header row, frozen header, autofilter, sized
+columns. Identifiers are written as *text-typed* cells (`t="inlineStr"`, number
+format `@`), because Excel otherwise converts `00123456` into the number
+`123456` and destroys the leading zeroes. `registered_at` is a real datetime
+cell, so it sorts chronologically.
+
+```
+GET /api/admin/registrations/export?format=xlsx&topic_id=3&sort=full_name&dir=asc
+→ 200, groupify-registrations-20261111-091402.xlsx
+```
+
+Because both formats are `GET`, the browser can download them with a plain link;
+the session cookie travels automatically and no CSRF token is needed.
 
 `DELETE /api/admin/registrations/{id}` → `204`. Removes the registration and
 releases the capacity slot in one transaction. This is the only sanctioned way to
