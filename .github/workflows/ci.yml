@@ -102,6 +102,117 @@ jobs:
       - name: typecheck + build
         run: npm run build
 
+  # The browser suite. It runs the thing that ships — the built SPA served by
+  # the Go API, APP_ENV=production — because every bug this suite has caught so
+  # far was an integration problem: a 401 refetch loop, a cookie the browser
+  # refused to send back, a redirect fighting the router.
+  e2e:
+    name: e2e (playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: groupify
+          POSTGRES_PASSWORD: groupify
+          POSTGRES_DB: groupify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U groupify -d groupify"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+
+    env:
+      DATABASE_URL: postgres://groupify:groupify@127.0.0.1:5432/groupify_e2e?sslmode=disable
+      ADMIN_EMAIL: rep@example.edu
+      ADMIN_PASSWORD: change-me-please-123
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: typecheck the suite
+        working-directory: frontend
+        run: npm run typecheck:e2e
+
+      - name: build the SPA
+        working-directory: frontend
+        run: npm run build
+
+      - name: build the API
+        working-directory: backend
+        run: |
+          go build -trimpath -o /tmp/groupify-api ./cmd/api
+          go build -trimpath -o /tmp/groupify-seed ./cmd/seed
+
+      - name: create the e2e database
+        run: |
+          PGPASSWORD=groupify psql -h 127.0.0.1 -p 5432 -U groupify -d groupify \
+            -v ON_ERROR_STOP=1 -c 'CREATE DATABASE groupify_e2e'
+
+      - name: install chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      # APP_ENV=production is deliberate: the deployment configuration is what
+      # broke, so it is what the suite should exercise. The rate limits are
+      # raised because every test signs in from the same IP.
+      - name: start the API
+        run: |
+          APP_ENV=production \
+          HTTP_ADDR=:8090 \
+          STATIC_DIR="$PWD/frontend/dist" \
+          AUTO_MIGRATE=true \
+          RATE_LIMIT_LOGIN_PER_MINUTE=200 \
+          RATE_LIMIT_REGISTER_PER_MINUTE=1000 \
+          nohup /tmp/groupify-api > /tmp/api.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8090/readyz > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          echo "the API never became ready"
+          tail -40 /tmp/api.log
+          exit 1
+
+      - name: seed the administrator
+        run: /tmp/groupify-seed
+
+      - name: run the suite
+        working-directory: frontend
+        env:
+          E2E_BASE_URL: http://127.0.0.1:8090
+        run: npx playwright test
+
+      - name: API log
+        if: failure()
+        run: tail -60 /tmp/api.log
+
+      - name: upload traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: frontend/test-results
+          retention-days: 7
+
   # The deployable artifact is one image containing both halves. Without this
   # job a stale COPY path or a missing build step is only discovered on deploy.
   image:

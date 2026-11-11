@@ -16,7 +16,7 @@ DB_VOLUME    := groupify-pgdata
 BACKEND := backend
 
 .PHONY: help env db-up db-down db-reset db-logs psql psql-test \
-        api seed build web image test test-integration race fmt vet tidy check clean
+        api seed build web image e2e test test-integration race fmt vet tidy check clean
 
 help: ## Show available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -98,5 +98,8 @@ fmt: ## Format Go code
 
 tidy: ## Tidy modules
 	cd $(BACKEND) && go mod tidy
+
+e2e: db-up ## Browser suite against a throwaway stack (builds both halves)
+	./scripts/e2e.sh
 
 check: fmt test web ## Quick local gate (Go + SPA build)
