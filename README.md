@@ -51,7 +51,7 @@ curl localhost:8081/api/registration-status
 curl -c jar -X POST localhost:8081/api/admin/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"rep@example.edu","password":"change-me-please-123"}'
-./scripts/smoke.sh        # 48 checks across the whole surface
+./scripts/smoke.sh --reset   # 48 checks; wipes the dev database first
 ```
 
 ## Tests

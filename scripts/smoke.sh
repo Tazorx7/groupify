@@ -6,6 +6,18 @@ set -uo pipefail
 BASE="${BASE:-http://127.0.0.1:8081}"
 EMAIL="${ADMIN_EMAIL:-rep@example.edu}"
 PASSWORD="${ADMIN_PASSWORD:-change-me-please-123}"
+DATABASE_URL="${DATABASE_URL:-postgres://groupify:groupify@127.0.0.1:5433/groupify?sslmode=disable}"
+
+# --reset wipes the database first. The assertions below describe a whole
+# lifecycle, so they need a known starting point.
+if [ "${1:-}" = "--reset" ]; then
+  echo "resetting database ${DATABASE_URL%%\?*}"
+  psql "$DATABASE_URL" -q -c "
+    TRUNCATE registrations, topics, audit_logs, idempotency_keys,
+             admin_sessions, admins, app_settings RESTART IDENTITY CASCADE;
+    INSERT INTO app_settings (id, registration_open) VALUES (1, false);" || exit 1
+  ( cd "$(dirname "$0")/.." && make seed >/dev/null ) || exit 1
+fi
 
 JAR=$(mktemp)
 BODY=$(mktemp)
