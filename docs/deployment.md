@@ -27,10 +27,10 @@ caveat about rate limiting, below.
 | `AUTO_MIGRATE` | – | `true` | Run migrations at start. |
 | `STATIC_DIR` | – | – | Directory holding the built SPA (`index.html` + `assets/`). The image sets this to `/app/static`; leave empty in development so the Vite dev server proxies `/api` instead. The API refuses to start if it is set but has no `index.html`. |
 | `SESSION_TTL` | – | `12h` | Sliding window; `last_seen_at` writes are throttled to 1/min. |
-| `COOKIE_SECURE` | – | `false` | Forced to `true` when `APP_ENV=production`. |
+| `COOKIE_SECURE` | – | `auto` | `auto` marks the cookie Secure whenever the request arrived over HTTPS (directly or via a trusted `X-Forwarded-Proto`). `always` forces it. `never` is refused when `APP_ENV=production`. |
 | `COOKIE_DOMAIN` | – | – | Only needed when the API is on a different host than the SPA — not the case for the single-origin image. |
 | `CORS_ORIGINS` | – | – | Comma-separated. Leave empty: the SPA is same-origin, so no `Access-Control-*` headers are emitted. |
-| `TRUST_PROXY_HEADERS` | – | `false` | Set `true` only behind a proxy you control; it enables `X-Forwarded-For` for client IPs. |
+| `TRUST_PROXY_HEADERS` | – | `false` | Set `true` only behind a proxy you control; it enables `X-Forwarded-For` (client IPs) and `X-Forwarded-Proto` (the cookie's Secure flag). |
 | `RATE_LIMIT_LOGIN_PER_MINUTE` | – | `5` | Per client IP. |
 | `RATE_LIMIT_REGISTER_PER_MINUTE` | – | `60` | Deliberately generous: a campus NAT presents one IP for a whole lab. |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | seed only | – | Read by `cmd/seed`, never by the API. |
@@ -38,12 +38,26 @@ caveat about rate limiting, below.
 No secret is ever read from the repository. `.env` is git-ignored; production
 values come from the platform's secret manager.
 
-> **Cookies and `APP_ENV`.** `APP_ENV=production` implies `COOKIE_SECURE=true`,
-> so the browser will only send the session cookie over HTTPS. A production image
-> tested over plain HTTP (e.g. `http://localhost:8080`) will look broken — sign-in
-> appears to succeed but the session never sticks. For local container runs use
-> `APP_ENV=dev` (which is what `compose.yaml` does); for anything reachable from a
-> real user, terminate TLS at the proxy and keep `APP_ENV=production`.
+> **Cookies are decided per request.** The Secure flag is not a startup
+> boolean: a Secure cookie is never sent over plain HTTP, so marking one
+> unconditionally means sign-in "works" and the session silently never returns —
+> the most tedious possible bug to diagnose. `COOKIE_SECURE=auto` (the default)
+> marks the cookie Secure exactly when the request arrived over HTTPS, so the
+> same image behaves correctly behind a TLS proxy, on localhost over HTTP, and
+> under `APP_ENV=production`.
+>
+> Two guards back that up. `APP_ENV=production` refuses to start with
+> `COOKIE_SECURE=never`, because the admin session would cross the wire in clear
+> text. And in production a session is only issued over HTTPS **or to a loopback
+> host** — anyone else hitting a plain-HTTP deployment gets
+> `500 insecure_transport` instead of a token, with no cookie written. Loopback
+> is allowed precisely so the deployed image can be checked on the machine that
+> built it.
+>
+> Startup logs the resolved policy (`cookie_secure`, `trust_proxy_headers`) and
+> warns when production runs with `auto` but `TRUST_PROXY_HEADERS=false`, since
+> that combination only marks cookies Secure when TLS terminates on the process
+> itself.
 
 ## Build
 
@@ -113,11 +127,16 @@ That is the whole rewrite story: one catch-all in Go, nothing at the proxy.
    `ADMIN_PASSWORD` — change it after first login).
 5. Verify `GET /readyz` returns `200`, `GET /` returns the shell, and `GET /api/topics`
    returns JSON.
-6. Sign in at `/admin/login` over HTTPS and confirm the session survives a reload
-   (this is the cookie/`APP_ENV` check).
+6. Sign in at `/admin/login` over HTTPS and confirm the session survives a reload.
+   The startup log line `cookie_secure=auto trust_proxy_headers=…` tells you
+   which policy is in force; `Set-Cookie` on the login response must carry
+   `Secure` when the browser is on `https://`.
 
 ## Security notes
 
+* The session cookie is `HttpOnly`, `SameSite=Lax`, and `Secure` whenever the
+  request arrived over HTTPS (see the note above). Sessions are only issued over
+  plain HTTP to loopback in production.
 * Passwords: Argon2id, 64 MiB / t=3 / p=4, PHC-encoded. Login performs a dummy
   verification for unknown accounts so response time does not reveal which
   addresses exist.

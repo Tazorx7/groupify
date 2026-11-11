@@ -37,6 +37,12 @@ export default function LoginPage() {
           setError('That email and password do not match an organiser account.')
         } else if (err.code === 'rate_limited') {
           setError('Too many sign-in attempts. Wait a minute and try again.')
+        } else if (err.code === 'insecure_transport') {
+          // Production refuses to hand out a session over plain HTTP, which is
+          // otherwise indistinguishable from "sign-in does nothing".
+          setError(
+            'This deployment only signs in over HTTPS. Open the site at its https:// address.',
+          )
         } else {
           setError(err.message)
         }
