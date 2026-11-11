@@ -1,10 +1,12 @@
 package registrations
 
 import (
+	"bytes"
 	"encoding/csv"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/groupify/groupify/backend/internal/domain"
@@ -68,27 +70,68 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	httpx.NoContent(w)
 }
 
-// Export handles GET /api/admin/registrations/export.
+// Export handles GET /api/admin/registrations/export?format=csv|xlsx.
 //
-// The CSV is streamed with a UTF-8 BOM so Excel detects the encoding; every
-// field is quoted by encoding/csv, which neutralises formula-injection payloads
-// that start with =, +, - or @ when the file is opened in a spreadsheet.
+// Both formats honour the same search/filter/sort parameters the admin list
+// uses, and both are capped at 10 000 rows.
 func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
+	format := strings.ToLower(httpx.QueryString(r, "format"))
+	if format == "" {
+		format = "csv"
+	}
+	if format != "csv" && format != "xlsx" {
+		httpx.Fail(w, r, domain.ValidationError("Unsupported export format.",
+			map[string]string{"format": `Must be "csv" or "xlsx".`}))
+		return
+	}
+
 	rows, err := h.svc.ExportRows(r.Context(), filterFromRequest(r))
 	if err != nil {
 		httpx.Fail(w, r, err)
 		return
 	}
 
-	filename := fmt.Sprintf("groupify-registrations-%s.csv", time.Now().UTC().Format("20060102-150405"))
-	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	// Render into a buffer first: a serialisation failure can then produce a
+	// clean JSON error instead of a half-written download.
+	var (
+		body        []byte
+		contentType string
+		filename    string
+	)
+
+	switch format {
+	case "xlsx":
+		body, err = writeXLSX(rows)
+		contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+		filename = ExcelExportFilename(time.Now())
+	default:
+		body = writeCSV(rows)
+		contentType = "text/csv; charset=utf-8"
+		filename = fmt.Sprintf("groupify-registrations-%s.csv", time.Now().UTC().Format("20060102-150405"))
+	}
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
 
-	_, _ = w.Write([]byte("\xEF\xBB\xBF"))
+// writeCSV renders the UTF-8 (BOM) CSV variant.
+//
+// The BOM makes Excel detect the encoding. Every field is quoted by
+// encoding/csv, and values that a spreadsheet would evaluate as a formula are
+// prefixed with an apostrophe.
+func writeCSV(rows []AdminRegistration) []byte {
+	var buf bytes.Buffer
+	buf.WriteString("\xEF\xBB\xBF")
 
-	cw := csv.NewWriter(w)
+	cw := csv.NewWriter(&buf)
 	_ = cw.Write([]string{"index_number", "full_name", "topic", "registered_at"})
 	for _, reg := range rows {
 		_ = cw.Write([]string{
@@ -99,10 +142,7 @@ func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	cw.Flush()
-	if err := cw.Error(); err != nil {
-		// Headers are already sent; the truncated file is the only signal.
-		return
-	}
+	return buf.Bytes()
 }
 
 func filterFromRequest(r *http.Request) Filter {

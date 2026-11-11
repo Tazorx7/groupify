@@ -19,13 +19,13 @@ even when two students submit for the last seat at the same instant.
 | 1. Foundation: schema, migrations, config, health | ✅ |
 | 2. Core registration: atomic capacity, uniqueness, idempotency | ✅ |
 | 4. Admin foundation: auth, topic management, open/close | ✅ |
-| 5. Admin operations: search, filters, CSV, audit log | ✅ |
+| 5. Admin operations: search, filters, CSV/XLSX export, audit log | ✅ |
 | 6. Hardening: concurrency tests, security review | 🟡 backend done, deployment pending |
 | 3. Student interface + admin UI | ⬜ frontend not started |
 
 ## Stack
 
-Go 1.27 · chi · pgx/v5 · PostgreSQL 18 · `log/slog` · Argon2id
+Go 1.27 · chi · pgx/v5 · PostgreSQL 18 · `log/slog` · Argon2id · excelize (XLSX)
 (frontend: React + TypeScript + Tailwind + React Router — not yet built).
 
 ## Quick start
@@ -86,7 +86,7 @@ backend/
     auth/           Argon2id hashing, opaque sessions
     audit/          in-transaction audit writes, admin log reader
     topics/         service · store · http
-    registrations/  service (the transaction) · store · http · CSV
+    registrations/  service (the transaction) · store · http · CSV + XLSX export
     settings/       open/close switch and its lock protocol
     admin/          login, logout, overview
     httpapi/        the single route table and its middleware stack
@@ -112,3 +112,5 @@ docs/               api · database · deployment
 * **Admin removals are the only way to undo a selection**, and they free the slot
   and write an audit row in the same transaction.
 * **Audit logs carry no student identifiers** — registration id and topic only.
+* **Exports come in CSV and XLSX.** XLSX writes identifiers as text-typed cells;
+  otherwise Excel turns `00123456` into `123456` and quietly corrupts the roster.
