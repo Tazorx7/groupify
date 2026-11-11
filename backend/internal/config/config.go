@@ -22,8 +22,12 @@ type Config struct {
 	TrustProxyHeaders bool
 
 	SessionTTL   time.Duration
-	CookieSecure bool
+	CookieMode   CookieMode
 	CookieDomain string
+
+	// Warnings are non-fatal configuration problems worth telling the operator
+	// about at startup. Whoever calls Load decides how to surface them.
+	Warnings []string
 
 	RateLimitLoginPerMinute    int
 	RateLimitRegisterPerMinute int
@@ -36,6 +40,44 @@ type Config struct {
 
 func (c *Config) IsProduction() bool { return c.Env == "production" }
 
+// CookieMode decides when the session cookie carries the Secure flag.
+//
+// The flag cannot be a single boolean decided at startup: the same binary is
+// reached over HTTPS behind a proxy in production and over plain HTTP on
+// localhost, and a cookie marked Secure is never sent over HTTP at all. Getting
+// that wrong does not produce an error — sign-in "works", the session simply
+// never comes back, which is a miserable thing to debug.
+type CookieMode string
+
+const (
+	// CookieSecureAuto marks the cookie Secure exactly when the request that
+	// issued it arrived over HTTPS (including via a trusted proxy header).
+	// Correct behind TLS termination, correct on localhost, correct for a
+	// production image someone is checking over HTTP.
+	CookieSecureAuto CookieMode = "auto"
+	// CookieSecureAlways is for deployments that terminate TLS somewhere the
+	// process cannot see and cannot be configured to trust.
+	CookieSecureAlways CookieMode = "always"
+	// CookieSecureNever exists for plain-HTTP development. Production refuses
+	// to start with it.
+	CookieSecureNever CookieMode = "never"
+)
+
+// parseCookieMode accepts the keywords and the booleans people already have in
+// their environment files.
+func parseCookieMode(raw string) (CookieMode, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "auto":
+		return CookieSecureAuto, nil
+	case "always", "true", "1", "t", "yes":
+		return CookieSecureAlways, nil
+	case "never", "false", "0", "f", "no":
+		return CookieSecureNever, nil
+	default:
+		return "", fmt.Errorf("COOKIE_SECURE must be auto, always or never (got %q)", raw)
+	}
+}
+
 // Load reads configuration. A .env file in the working directory (or up to two
 // parents) is loaded first; real environment variables always win.
 func Load() (*Config, error) {
@@ -47,7 +89,7 @@ func Load() (*Config, error) {
 		DatabaseURL:                env("DATABASE_URL", ""),
 		CORSOrigins:                splitList(env("CORS_ORIGINS", "")),
 		TrustProxyHeaders:          boolEnv("TRUST_PROXY_HEADERS", false),
-		CookieSecure:               boolEnv("COOKIE_SECURE", false),
+		CookieMode:                 CookieSecureAuto,
 		CookieDomain:               env("COOKIE_DOMAIN", ""),
 		RateLimitLoginPerMinute:    intEnv("RATE_LIMIT_LOGIN_PER_MINUTE", 5),
 		RateLimitRegisterPerMinute: intEnv("RATE_LIMIT_REGISTER_PER_MINUTE", 60),
@@ -61,6 +103,9 @@ func Load() (*Config, error) {
 	if cfg.SessionTTL, err = durationEnv("SESSION_TTL", 12*time.Hour); err != nil {
 		return nil, err
 	}
+	if cfg.CookieMode, err = parseCookieMode(env("COOKIE_SECURE", "")); err != nil {
+		return nil, err
+	}
 
 	if cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
@@ -71,9 +116,24 @@ func Load() (*Config, error) {
 	if cfg.RateLimitRegisterPerMinute <= 0 {
 		cfg.RateLimitRegisterPerMinute = 60
 	}
-	if cfg.IsProduction() {
-		cfg.CookieSecure = true
+
+	// Turning the Secure flag off in production is not a trade-off, it is a
+	// broken deployment: the admin session would travel in clear text. Refuse
+	// to start rather than serve it and hope nobody notices.
+	if cfg.IsProduction() && cfg.CookieMode == CookieSecureNever {
+		return nil, fmt.Errorf(
+			"COOKIE_SECURE=false is not allowed with APP_ENV=production: " +
+				"the admin session cookie would be sent over plain HTTP. " +
+				"Leave it unset (auto) or set COOKIE_SECURE=always")
 	}
+	if cfg.IsProduction() && cfg.CookieMode == CookieSecureAuto && !cfg.TrustProxyHeaders {
+		cfg.Warnings = append(cfg.Warnings,
+			"APP_ENV=production with COOKIE_SECURE=auto and TRUST_PROXY_HEADERS=false: "+
+				"cookies are Secure only when TLS terminates on this process. "+
+				"If a proxy terminates TLS in front of it, set TRUST_PROXY_HEADERS=true "+
+				"(or COOKIE_SECURE=always) or the session will not be marked Secure.")
+	}
+
 	return cfg, nil
 }
 
@@ -172,20 +232,55 @@ func parseDotEnv(path string) {
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, value, ok := strings.Cut(line, "=")
+		key, value, ok := parseDotEnvLine(scanner.Text())
 		if !ok {
 			continue
 		}
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		value = strings.Trim(value, `"'`)
 		if _, exists := os.LookupEnv(key); exists {
 			continue
 		}
 		_ = os.Setenv(key, value)
 	}
+}
+
+// parseDotEnvLine understands the parts of the format people actually write:
+// blank lines, full-line comments, `export` prefixes, quoted values, and
+// trailing comments.
+//
+// The trailing comment case is not cosmetic. `COOKIE_SECURE=false  # only in
+// production` used to load the entire string as the value, and the process then
+// died with "COOKIE_SECURE must be auto, always or never" — pointing at the
+// wrong problem. Values that are quoted are taken literally, so a password
+// containing `#` survives.
+func parseDotEnvLine(raw string) (key, value string, ok bool) {
+	line := strings.TrimSpace(raw)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return "", "", false
+	}
+	line = strings.TrimPrefix(line, "export ")
+
+	key, value, found := strings.Cut(line, "=")
+	if !found {
+		return "", "", false
+	}
+	key = strings.TrimSpace(key)
+	value = strings.TrimSpace(value)
+
+	if len(value) > 0 && (value[0] == '"' || value[0] == '\'') {
+		quote := value[0]
+		if end := strings.IndexByte(value[1:], quote); end >= 0 {
+			return key, value[1 : 1+end], true
+		}
+		return key, strings.Trim(value, `"'`), true
+	}
+
+	// Unquoted: a `#` that starts the value or follows whitespace begins a
+	// comment. `abc#def` is a value, which matters for generated passwords.
+	if i := strings.IndexFunc(value, func(r rune) bool { return r == '#' }); i >= 0 {
+		if i == 0 || value[i-1] == ' ' || value[i-1] == '\t' {
+			value = value[:i]
+		}
+	}
+
+	return key, strings.TrimSpace(value), true
 }

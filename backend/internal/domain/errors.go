@@ -106,6 +106,8 @@ var (
 		"Request could not be verified. Refresh the page and try again.")
 	ErrForbidden = newError(http.StatusForbidden, "forbidden",
 		"You do not have permission to perform this action.")
+	ErrInsecureCookie = newError(http.StatusInternalServerError, "insecure_transport",
+		"Refusing to create a session over plain HTTP. Reach this site over HTTPS.")
 	ErrNotFound = newError(http.StatusNotFound, "not_found", "Not found.")
 	ErrConflict = newError(http.StatusConflict, "conflict",
 		"The request conflicts with the current state.")
