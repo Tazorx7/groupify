@@ -49,8 +49,10 @@ export interface AdminTopic {
   name: string
   description: string
   capacity: number
-  current_members: number
+  registered_count: number
+  remaining_spaces: number
   is_active: boolean
+  status: 'available' | 'full' | 'unavailable'
   created_at: string
   updated_at: string
 }
@@ -109,7 +111,8 @@ export interface AuditEntry {
   actor_label: string | null
   action: string
   entity_type: string
-  entity_id: number | null
+  /** The backend serialises entity identifiers as text. */
+  entity_id: string | null
   before_data: Record<string, unknown> | null
   after_data: Record<string, unknown> | null
   created_at: string
