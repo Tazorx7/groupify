@@ -27,6 +27,11 @@ type Config struct {
 
 	RateLimitLoginPerMinute    int
 	RateLimitRegisterPerMinute int
+
+	// StaticDir, when set, points at the built SPA. The API then serves it
+	// from the same origin as /api, so session cookies stay first-party and
+	// CORS is unnecessary.
+	StaticDir string
 }
 
 func (c *Config) IsProduction() bool { return c.Env == "production" }
@@ -46,6 +51,7 @@ func Load() (*Config, error) {
 		CookieDomain:               env("COOKIE_DOMAIN", ""),
 		RateLimitLoginPerMinute:    intEnv("RATE_LIMIT_LOGIN_PER_MINUTE", 5),
 		RateLimitRegisterPerMinute: intEnv("RATE_LIMIT_REGISTER_PER_MINUTE", 60),
+		StaticDir:                  env("STATIC_DIR", ""),
 	}
 
 	var err error

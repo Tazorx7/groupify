@@ -20,6 +20,7 @@ import (
 	"github.com/groupify/groupify/backend/internal/middleware"
 	"github.com/groupify/groupify/backend/internal/registrations"
 	"github.com/groupify/groupify/backend/internal/settings"
+	"github.com/groupify/groupify/backend/internal/static"
 	"github.com/groupify/groupify/backend/internal/topics"
 	"github.com/groupify/groupify/backend/migrations"
 )
@@ -36,6 +37,11 @@ func main() {
 		os.Exit(1)
 	}
 	setupLogger(cfg)
+
+	if cfg.StaticDir != "" && !static.Exists(cfg.StaticDir) {
+		slog.Error("STATIC_DIR does not contain index.html", "dir", cfg.StaticDir)
+		os.Exit(1)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -83,6 +89,7 @@ func main() {
 		LoginLimiter:    middleware.NewLimiter(cfg.RateLimitLoginPerMinute),
 		RegisterLimiter: middleware.NewLimiter(cfg.RateLimitRegisterPerMinute),
 		Ping:            pool.Ping,
+		StaticDir:       cfg.StaticDir,
 	})
 
 	srv := &http.Server{
