@@ -6,6 +6,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -19,6 +20,7 @@ import (
 	"github.com/groupify/groupify/backend/internal/middleware"
 	"github.com/groupify/groupify/backend/internal/registrations"
 	"github.com/groupify/groupify/backend/internal/settings"
+	"github.com/groupify/groupify/backend/internal/static"
 	"github.com/groupify/groupify/backend/internal/topics"
 )
 
@@ -35,6 +37,10 @@ type Deps struct {
 	LoginLimiter    *middleware.Limiter
 	RegisterLimiter *middleware.Limiter
 	Ping            func(ctx context.Context) error
+
+	// StaticDir serves the built SPA. Empty disables it (development uses the
+	// Vite dev server and its proxy instead).
+	StaticDir string
 }
 
 // New builds the complete HTTP handler.
@@ -114,6 +120,18 @@ func New(d Deps) http.Handler {
 			})
 		})
 	})
+
+	// The SPA catch-all goes last and never answers under /api: an unknown API
+	// path must stay a JSON 404 instead of returning index.html.
+	if serveSPA := static.Handler(d.StaticDir); serveSPA != nil {
+		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				httpx.Fail(w, r, domain.ErrNotFound)
+				return
+			}
+			serveSPA(w, r)
+		})
+	}
 
 	return r
 }
