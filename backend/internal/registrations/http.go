@@ -85,7 +85,7 @@ func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.svc.ExportRows(r.Context(), filterFromRequest(r))
+	data, err := h.svc.Export(r.Context(), filterFromRequest(r))
 	if err != nil {
 		httpx.Fail(w, r, err)
 		return
@@ -101,11 +101,11 @@ func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
 
 	switch format {
 	case "xlsx":
-		body, err = writeXLSX(rows)
+		body, err = writeXLSX(data)
 		contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 		filename = ExcelExportFilename(time.Now())
 	default:
-		body = writeCSV(rows)
+		body = writeCSV(data.Rows)
 		contentType = "text/csv; charset=utf-8"
 		filename = fmt.Sprintf("groupify-registrations-%s.csv", time.Now().UTC().Format("20060102-150405"))
 	}

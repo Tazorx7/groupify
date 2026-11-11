@@ -352,3 +352,37 @@ func orderColumn(sortBy string) string {
 		return "r.created_at"
 	}
 }
+
+// TopicSummary is an export-time aggregate per topic. It comes from the
+// topics table (not from the registration rows) so the grouped export can also
+// show topics that received nobody, which is usually the first thing an admin
+// wants to know.
+type TopicSummary struct {
+	ID       int64
+	Name     string
+	Capacity int
+	Members  int
+	IsActive bool
+}
+
+// TopicSummaries returns every topic ordered by name.
+func (s *Store) TopicSummaries(ctx context.Context) ([]TopicSummary, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, name, capacity, current_members, is_active
+		FROM topics
+		ORDER BY lower(name)`)
+	if err != nil {
+		return nil, fmt.Errorf("list topic summaries: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]TopicSummary, 0, 16)
+	for rows.Next() {
+		var t TopicSummary
+		if err := rows.Scan(&t.ID, &t.Name, &t.Capacity, &t.Members, &t.IsActive); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}

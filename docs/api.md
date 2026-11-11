@@ -165,11 +165,21 @@ encoding. Fields beginning with `= + - @` are prefixed with `'` to neutralise
 spreadsheet formula injection.
 
 **XLSX** — `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
-one `Registrations` sheet, bold header row, frozen header, autofilter, sized
-columns. Identifiers are written as *text-typed* cells (`t="inlineStr"`, number
-format `@`), because Excel otherwise converts `00123456` into the number
-`123456` and destroys the leading zeroes. `registered_at` is a real datetime
-cell, so it sorts chronologically.
+**two sheets**, both with a frozen bold header and autofilter:
+
+| Sheet | Contents |
+|---|---|
+| `Summary` | One row per topic — Topic, Capacity, Registered, Remaining, Status — plus a `TOTAL` row. Built from the topics table, so topics with zero sign-ups and inactive topics are listed too. This is the "grouped" view to hand to the department. |
+| `Registrations` | The roster ordered by topic, so each topic's students form one contiguous block: Topic, Index number, Full name, Registered at. |
+
+Identifiers are written as *text-typed* cells (`t="inlineStr"`, number format
+`@`), because Excel otherwise converts `00123456` into the number `123456` and
+destroys the leading zeroes. `registered_at` is a real datetime cell, so it
+sorts chronologically.
+
+Exports default to `sort=topic&dir=asc` when no sort is given; pass an explicit
+`sort`/`dir` to override the order of the roster sheet. The interactive list
+keeps its own default (newest first).
 
 ```
 GET /api/admin/registrations/export?format=xlsx&topic_id=3&sort=full_name&dir=asc
