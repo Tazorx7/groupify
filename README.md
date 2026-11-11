@@ -7,14 +7,13 @@ topics and capacities, opens and closes the registration period, and manages the
 resulting list. The system never allows a topic to exceed its capacity — not
 even when two students submit for the last seat at the same instant.
 
-* Product requirements: [`PRD.md`](./PRD.md)
 * API reference: [`docs/api.md`](./docs/api.md)
 * Schema and concurrency design: [`docs/database.md`](./docs/database.md)
 * Deployment: [`docs/deployment.md`](./docs/deployment.md)
 
 ## Status
 
-| Milestone (PRD §20) | State |
+| Milestone | State |
 |---|---|
 | 1. Foundation: schema, migrations, config, health | ✅ |
 | 2. Core registration: atomic capacity, uniqueness, idempotency | ✅ |
@@ -109,7 +108,7 @@ CI runs all of it (`.github/workflows/ci.yml`); `backend (go)`,
 `frontend (react)`, `e2e (playwright)` and `image (docker)` are required checks
 on `main`.
 
-The Go suite includes the proofs the PRD asks for:
+The Go suite includes the following concurrency and data-integrity proofs:
 
 * 40 concurrent registrations against a 5-seat topic → exactly 5 succeed,
   counter equals row count, losers consume nothing.
