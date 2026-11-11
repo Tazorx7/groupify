@@ -173,11 +173,35 @@ func (s *Service) List(ctx context.Context, f Filter) (domain.ListResult[AdminRe
 	return domain.NewListResult(items, total, f.Page), nil
 }
 
-// ExportRows returns registrations for CSV export, hard-capped so a single
-// request cannot exhaust memory.
-func (s *Service) ExportRows(ctx context.Context, f Filter) ([]AdminRegistration, error) {
+// ExportData is everything an export needs: the registration rows plus the
+// per-topic aggregates used by the grouped spreadsheet.
+type ExportData struct {
+	Rows   []AdminRegistration
+	Topics []TopicSummary
+}
+
+// Export returns registrations for download, hard-capped at 10 000 rows so a
+// single request cannot exhaust memory.
+//
+// When the caller does not choose an explicit sort, exports default to topic
+// then student name, which is the grouping admins actually want in the file.
+// The interactive list keeps its own default (newest first).
+func (s *Service) Export(ctx context.Context, f Filter) (*ExportData, error) {
+	if f.SortBy == "" {
+		f.SortBy = "topic"
+		f.SortDir = "asc"
+	}
 	f = f.Normalize()
-	return s.store.ExportRows(ctx, f, 10_000)
+
+	rows, err := s.store.ExportRows(ctx, f, 10_000)
+	if err != nil {
+		return nil, err
+	}
+	topics, err := s.store.TopicSummaries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &ExportData{Rows: rows, Topics: topics}, nil
 }
 
 // Delete removes a registration on an administrator's authority and frees the

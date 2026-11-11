@@ -112,5 +112,7 @@ docs/               api · database · deployment
 * **Admin removals are the only way to undo a selection**, and they free the slot
   and write an audit row in the same transaction.
 * **Audit logs carry no student identifiers** — registration id and topic only.
-* **Exports come in CSV and XLSX.** XLSX writes identifiers as text-typed cells;
-  otherwise Excel turns `00123456` into `123456` and quietly corrupts the roster.
+* **Exports come in CSV and XLSX.** XLSX is grouped: a `Summary` sheet (per topic,
+  with capacity/registered/remaining and totals) plus a roster sheet ordered by
+  topic. Identifiers are text-typed cells, otherwise Excel turns `00123456` into
+  `123456` and quietly corrupts the roster.
