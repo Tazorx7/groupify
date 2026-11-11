@@ -38,6 +38,16 @@ func main() {
 	}
 	setupLogger(cfg)
 
+	for _, warning := range cfg.Warnings {
+		slog.Warn(warning)
+	}
+	slog.Info("starting groupify",
+		"env", cfg.Env,
+		"cookie_secure", string(cfg.CookieMode),
+		"trust_proxy_headers", cfg.TrustProxyHeaders,
+		"static_dir", cfg.StaticDir,
+	)
+
 	if cfg.StaticDir != "" && !static.Exists(cfg.StaticDir) {
 		slog.Error("STATIC_DIR does not contain index.html", "dir", cfg.StaticDir)
 		os.Exit(1)
@@ -66,10 +76,12 @@ func main() {
 
 	sessionStore := auth.NewStore(pool)
 	authMW := middleware.NewAuth(sessionStore, middleware.SessionCookie{
-		Name:   sessionCookieName,
-		TTL:    cfg.SessionTTL,
-		Secure: cfg.CookieSecure,
-		Domain: cfg.CookieDomain,
+		Name:       sessionCookieName,
+		TTL:        cfg.SessionTTL,
+		Domain:     cfg.CookieDomain,
+		Mode:       cfg.CookieMode,
+		TrustProxy: cfg.TrustProxyHeaders,
+		Production: cfg.IsProduction(),
 	})
 
 	topicsSvc := topics.NewService(pool)

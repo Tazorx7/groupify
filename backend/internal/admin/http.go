@@ -10,8 +10,8 @@ import (
 
 // SessionCookieWriter is the subset of the auth middleware the handler needs.
 type SessionCookieWriter interface {
-	SetSessionCookie(w http.ResponseWriter, token string)
-	ClearSessionCookie(w http.ResponseWriter)
+	SetSessionCookie(w http.ResponseWriter, r *http.Request, token string) error
+	ClearSessionCookie(w http.ResponseWriter, r *http.Request)
 	Token(r *http.Request) string
 }
 
@@ -49,7 +49,13 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.cookie.SetSessionCookie(w, res.Token)
+	// Issuing can be refused (production, plain HTTP, non-loopback host), in
+	// which case no cookie is written and no token escapes in the body.
+	if err := h.cookie.SetSessionCookie(w, r, res.Token); err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+
 	httpx.JSON(w, http.StatusOK, loginResponse{
 		Admin:     res.Account,
 		CSRFToken: res.CSRFToken,
@@ -69,7 +75,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, err)
 		return
 	}
-	h.cookie.ClearSessionCookie(w)
+	h.cookie.ClearSessionCookie(w, r)
 	httpx.NoContent(w)
 }
 
