@@ -16,7 +16,7 @@ DB_VOLUME    := groupify-pgdata
 BACKEND := backend
 
 .PHONY: help env db-up db-down db-reset db-logs psql psql-test \
-        api seed build test test-integration race fmt vet tidy check clean
+        api seed build web image test test-integration race fmt vet tidy check clean
 
 help: ## Show available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -77,6 +77,12 @@ seed: env ## Create/update the bootstrap admin from ADMIN_EMAIL / ADMIN_PASSWORD
 build: ## Build the API binary
 	cd $(BACKEND) && go build -trimpath -o bin/groupify-api ./cmd/api
 
+web: ## Build the SPA into frontend/dist
+	cd frontend && npm ci && npm run build
+
+image: ## Build the single-origin container (API + SPA)
+	$(ENGINE) build -t groupify -f Dockerfile .
+
 test: ## Unit tests (no database required)
 	cd $(BACKEND) && go test ./... -count=1
 
@@ -93,4 +99,4 @@ fmt: ## Format Go code
 tidy: ## Tidy modules
 	cd $(BACKEND) && go mod tidy
 
-check: fmt test ## Quick local gate
+check: fmt test web ## Quick local gate (Go + SPA build)

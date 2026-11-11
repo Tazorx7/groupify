@@ -18,31 +18,63 @@ even when two students submit for the last seat at the same instant.
 |---|---|
 | 1. Foundation: schema, migrations, config, health | ✅ |
 | 2. Core registration: atomic capacity, uniqueness, idempotency | ✅ |
+| 3. Student interface + admin UI | ✅ |
 | 4. Admin foundation: auth, topic management, open/close | ✅ |
 | 5. Admin operations: search, filters, CSV/XLSX export, audit log | ✅ |
-| 6. Hardening: concurrency tests, security review | 🟡 backend done, deployment pending |
-| 3. Student interface + admin UI | ⬜ frontend not started |
+| 6. Hardening: concurrency tests, security review, single-origin deploy | ✅ |
 
 ## Stack
 
-Go 1.27 · chi · pgx/v5 · PostgreSQL 18 · `log/slog` · Argon2id · excelize (XLSX)
-(frontend: React + TypeScript + Tailwind + React Router — not yet built).
+**Backend** — Go 1.27 · chi · pgx/v5 · PostgreSQL 18 · `log/slog` · Argon2id ·
+excelize (XLSX).
+
+**Frontend** — React 19 · TypeScript · Vite · Tailwind CSS v4 · shadcn/ui
+(Base UI primitives) · TanStack Query · React Router.
+
+One image serves both: the Go API also serves the built SPA, so `/api` and the
+app share an origin (no CORS, first-party cookies).
 
 ## Quick start
+
+### Everything in containers
+
+```sh
+podman compose up --build     # or: docker compose up --build
+# http://localhost:8080       (student page)
+# http://localhost:8080/admin (organiser console)
+```
+
+`compose.yaml` runs PostgreSQL and the single-origin image. It sets
+`APP_ENV=dev` so cookies work over plain HTTP on loopback. With
+`APP_ENV=production` cookies become `Secure` and require HTTPS — see
+[`docs/deployment.md`](./docs/deployment.md).
+
+### Local development
 
 ```sh
 cp .env.example .env      # then adjust if needed
 make db-up                # PostgreSQL 18 in a rootless podman container on :5433
 make seed                 # creates the admin from ADMIN_EMAIL / ADMIN_PASSWORD
-make api                  # http://localhost:$PORT (HTTP_ADDR, default :8080)
+make api                  # http://localhost:8081 (HTTP_ADDR)
+cd frontend && npm ci && npm run dev   # http://localhost:5173, proxies /api -> :8081
 ```
 
 `make db-up` prefers podman (rootless) and falls back to docker. It runs
 PostgreSQL on host port **5433** because a system PostgreSQL usually owns 5432.
-The checked-in `.env` for this machine sets `HTTP_ADDR=:8081` because 8080
-was already occupied; `.env.example` uses the default `:8080`.
+The checked-in `.env` for this machine sets `HTTP_ADDR=:8081` because 8080 was
+already occupied; `.env.example` uses the default `:8080`. The Vite dev server
+proxies `/api` to `127.0.0.1:8081`, so nothing is served cross-origin in
+development either.
 
-Migrations run automatically on start.
+Migrations run automatically on start. `STATIC_DIR` stays empty in development —
+the API then serves only JSON and Vite serves the app.
+
+### Build the production shape
+
+```sh
+make web      # npm ci && vite build -> frontend/dist
+make image    # podman/docker build -t groupify -f Dockerfile .
+```
 
 ### Try it
 
@@ -57,14 +89,16 @@ curl -c jar -X POST localhost:8081/api/admin/login \
 ## Tests
 
 ```sh
-make test                 # unit tests, no database needed
-make db-up && make test-integration   # full suite, uses groupify_test
+make test                 # Go unit tests, no database needed
+make db-up && make test-integration   # full Go suite, uses groupify_test
 cd backend && TEST_DATABASE_URL=... go test ./internal/registrations -race
+cd frontend && npm run build && npm run lint
 ```
 
-Database-backed tests skip themselves when `TEST_DATABASE_URL` is unset.
+Database-backed tests skip themselves when `TEST_DATABASE_URL` is unset. CI runs
+both halves (`.github/workflows/ci.yml`) and both are required checks on `main`.
 
-The suite includes the proofs the PRD asks for:
+The Go suite includes the proofs the PRD asks for:
 
 * 40 concurrent registrations against a 5-seat topic → exactly 5 succeed,
   counter equals row count, losers consume nothing.
@@ -72,6 +106,11 @@ The suite includes the proofs the PRD asks for:
 * Registration racing an admin close, 25 rounds → no registration ever commits
   after the close returns, and `current_members` always equals the row count.
 * A failed insert after the capacity increment rolls the increment back.
+
+The frontend was verified by driving it in a real browser against the live API —
+student flow (full-topic lockout, index normalisation, duplicate rejection,
+confirmation surviving refresh) and organiser console (auth gate, topic CRUD,
+capacity floor, search, CSV/XLSX download, delete, open/close, audit log).
 
 ## Layout
 
@@ -90,9 +129,18 @@ backend/
     settings/       open/close switch and its lock protocol
     admin/          login, logout, overview
     httpapi/        the single route table and its middleware stack
+    static/         serves the built SPA with SPA fallback + cache headers
     middleware/     logging, recovery, security headers, CORS, rate limits, auth
     httpx/          JSON envelopes, strict decoding, error→HTTP mapping
   migrations/       embedded SQL, applied in lexical order
+frontend/
+  src/
+    features/student/   landing, topic cards, form, review, confirmation
+    features/admin/     login, overview, topics, registrations, settings, audit
+    components/ui/      shadcn/ui primitives
+    lib/                typed API client, types, formatting
+Dockerfile          single-origin image (SPA build + Go build + distroless)
+compose.yaml        db + app for a local full stack
 scripts/smoke.sh    end-to-end API check against a running instance
 docs/               api · database · deployment
 ```
@@ -108,7 +156,8 @@ docs/               api · database · deployment
   number, not an application check.
 * **No student self-service lookup.** Without a roster or one-time code there is
   no safe way to prove a caller owns an index number, so confirmation exists only
-  in the POST response.
+  in the POST response (persisted in `sessionStorage` so a refresh does not look
+  like a failed registration).
 * **Admin removals are the only way to undo a selection**, and they free the slot
   and write an audit row in the same transaction.
 * **Audit logs carry no student identifiers** — registration id and topic only.
@@ -116,3 +165,5 @@ docs/               api · database · deployment
   with capacity/registered/remaining and totals) plus a roster sheet ordered by
   topic. Identifiers are text-typed cells, otherwise Excel turns `00123456` into
   `123456` and quietly corrupts the roster.
+* **Retries are safe.** The student page reuses one `Idempotency-Key` per payload,
+  so a dropped response cannot register twice.
