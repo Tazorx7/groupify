@@ -128,3 +128,20 @@
     @apply font-sans;
     }
 }
+/*
+ * Touch devices get a 44px minimum hit area without changing desktop density.
+ * The console's tables and filter bars are dense by design; a finger is not a
+ * cursor, so on coarse pointers every control grows to the size a thumb needs.
+ */
+@media (pointer: coarse) {
+  [data-slot='button'],
+  [data-slot='input'],
+  select {
+    min-height: 2.75rem;
+  }
+
+  [data-slot='button'][data-size^='icon'],
+  button[aria-label] {
+    min-width: 2.75rem;
+  }
+}
