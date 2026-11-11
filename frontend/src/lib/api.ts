@@ -96,7 +96,14 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
         ? (payload as { error: ApiErrorPayload }).error
         : { code: 'unexpected_error', message: 'Something went wrong. Please try again.' }
 
-    if (response.status === 401 && path !== '/admin/login') {
+    // A 401 from the session probe or the login call is a normal "signed out"
+    // answer, not an expired session: treating it as one would make the probe
+    // fight with the redirect it causes, refetching in a loop.
+    if (
+      response.status === 401 &&
+      path !== '/admin/login' &&
+      path !== '/admin/session'
+    ) {
       onUnauthenticated?.()
     }
     throw new ApiError(response.status, body)
