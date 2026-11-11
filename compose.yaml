@@ -1,0 +1,29 @@
+# Groupify local stack.
+#
+# Works with `docker compose` and with podman-compose. If neither compose
+# provider is installed (the default on this machine), use the Makefile:
+#   make db-up
+#
+# The host port is 5433 because a system PostgreSQL may already own 5432.
+
+services:
+  db:
+    image: docker.io/library/postgres:18-alpine
+    container_name: groupify-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: groupify
+      POSTGRES_PASSWORD: groupify
+      POSTGRES_DB: groupify
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U groupify -d groupify"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:
