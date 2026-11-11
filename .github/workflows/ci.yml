@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend (go)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: groupify
+          POSTGRES_PASSWORD: groupify
+          POSTGRES_DB: groupify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U groupify -d groupify"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: gofmt
+        working-directory: backend
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        working-directory: backend
+        run: go vet ./...
+
+      - name: build
+        working-directory: backend
+        run: go build ./...
+
+      # The integration tests migrate and truncate TEST_DATABASE_URL, so the
+      # database has to exist before the suite runs.
+      - name: create test database
+        run: |
+          PGPASSWORD=groupify psql -h 127.0.0.1 -p 5432 -U groupify -d groupify \
+            -v ON_ERROR_STOP=1 -c 'CREATE DATABASE groupify_test'
+
+      # -p 1 serialises packages: the suites share one database and truncate it
+      # between cases, so they must not run concurrently. -race proves the
+      # capacity guard holds under real concurrency.
+      - name: test (unit + integration + race)
+        working-directory: backend
+        env:
+          TEST_DATABASE_URL: postgres://groupify:groupify@127.0.0.1:5432/groupify_test?sslmode=disable
+        run: go test ./... -race -count=1 -p 1
+
+  frontend:
+    name: frontend (react)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: install
+        run: npm ci
+
+      - name: lint
+        run: npm run lint
+
+      - name: typecheck + build
+        run: npm run build
