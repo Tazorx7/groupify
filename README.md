@@ -44,10 +44,10 @@ podman compose up --build     # or: docker compose up --build
 # http://localhost:8080/admin (organiser console)
 ```
 
-`compose.yaml` runs PostgreSQL and the single-origin image. It sets
-`APP_ENV=dev` so cookies work over plain HTTP on loopback. With
-`APP_ENV=production` cookies become `Secure` and require HTTPS — see
-[`docs/deployment.md`](./docs/deployment.md).
+`compose.yaml` runs PostgreSQL and the single-origin image with `APP_ENV=dev`.
+The image itself is production-configured and works either way: the session
+cookie is marked `Secure` per request, so plain-HTTP localhost still works while
+HTTPS deployments get the flag. See [`docs/deployment.md`](./docs/deployment.md).
 
 ### Local development
 
