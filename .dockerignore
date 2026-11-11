@@ -1,0 +1,24 @@
+# Build context for the single-origin image.
+#
+# The image builds the SPA and the API from source, so compiled output and
+# dependency trees must never enter the context: a local node_modules is
+# hundreds of megabytes, is platform-specific, and would shadow the clean
+# `npm ci` inside the image. CI masks all of this because a fresh clone has
+# neither — which is exactly why this file exists.
+
+# Version control and local config
+.git
+.gitignore
+.env
+.env.*
+
+# Dependencies and build output (rebuilt inside the image)
+**/node_modules
+frontend/dist
+backend/bin
+
+# Local/editor noise
+**/*.log
+.vscode
+.idea
+.DS_Store
