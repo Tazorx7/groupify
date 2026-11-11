@@ -93,10 +93,21 @@ make test                 # Go unit tests, no database needed
 make db-up && make test-integration   # full Go suite, uses groupify_test
 cd backend && TEST_DATABASE_URL=... go test ./internal/registrations -race
 cd frontend && npm run build && npm run lint
+make e2e                  # browser suite against a throwaway stack
 ```
 
-Database-backed tests skip themselves when `TEST_DATABASE_URL` is unset. CI runs
-both halves (`.github/workflows/ci.yml`) and both are required checks on `main`.
+Database-backed tests skip themselves when `TEST_DATABASE_URL` is unset. The
+browser suite needs `psql` and a database it may drop: `scripts/e2e.sh` creates
+`groupify_e2e`, builds the SPA and the API, starts the API with
+`APP_ENV=production`, seeds the admin, and runs Playwright against it
+(`./scripts/e2e.sh --headed` to watch, `./scripts/e2e.sh student.spec.ts` for one
+file). It deliberately runs the production configuration, because that is where
+the integration bugs lived — a 401 refetch loop, a cookie the browser refused to
+send back, a redirect fighting the router.
+
+CI runs all of it (`.github/workflows/ci.yml`); `backend (go)`,
+`frontend (react)`, `e2e (playwright)` and `image (docker)` are required checks
+on `main`.
 
 The Go suite includes the proofs the PRD asks for:
 
@@ -107,10 +118,13 @@ The Go suite includes the proofs the PRD asks for:
   after the close returns, and `current_members` always equals the row count.
 * A failed insert after the capacity increment rolls the increment back.
 
-The frontend was verified by driving it in a real browser against the live API —
-student flow (full-topic lockout, index normalisation, duplicate rejection,
-confirmation surviving refresh) and organiser console (auth gate, topic CRUD,
-capacity floor, search, CSV/XLSX download, delete, open/close, audit log).
+The frontend is verified by driving it in a real browser against the live API:
+`frontend/e2e/` covers the student flow (review step, index normalisation,
+duplicate rejection, full-topic lockout, confirmation surviving a refresh, a
+topic filling up mid-review) and the organiser console (auth gate, session
+surviving a reload, topic CRUD, capacity floor, deactivate, search, CSV/XLSX
+download, delete, open/close enforced server-side, audit log without student
+identity, 44px controls under touch emulation).
 
 ## Layout
 
@@ -139,9 +153,11 @@ frontend/
     features/admin/     login, overview, topics, registrations, settings, audit
     components/ui/      shadcn/ui primitives
     lib/                typed API client, types, formatting
+  e2e/              Playwright suite (student + organiser flows)
 Dockerfile          single-origin image (SPA build + Go build + distroless)
 compose.yaml        db + app for a local full stack
 scripts/smoke.sh    end-to-end API check against a running instance
+scripts/e2e.sh      browser suite against a throwaway stack
 docs/               api · database · deployment
 ```
 
