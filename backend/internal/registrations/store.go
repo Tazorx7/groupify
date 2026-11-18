@@ -262,10 +262,10 @@ func (s *Store) List(ctx context.Context, f Filter) ([]AdminRegistration, int, e
 		FROM registrations r
 		JOIN topics t ON t.id = r.topic_id
 		%s
-		ORDER BY %s %s, r.id %s
+		ORDER BY %s %s, lower(r.full_name) %s, r.id %s
 		LIMIT $%d OFFSET $%d`,
 		where, orderColumn(f.SortBy), strings.ToUpper(f.SortDir), strings.ToUpper(f.SortDir),
-		len(args)+1, len(args)+2)
+		strings.ToUpper(f.SortDir), len(args)+1, len(args)+2)
 
 	args = append(args, f.Page.Limit, f.Page.Offset)
 
@@ -294,9 +294,10 @@ func (s *Store) ExportRows(ctx context.Context, f Filter, limit int) ([]AdminReg
 		FROM registrations r
 		JOIN topics t ON t.id = r.topic_id
 		%s
-		ORDER BY %s %s, r.id %s
+		ORDER BY %s %s, lower(r.full_name) %s, r.id %s
 		LIMIT %d`,
-		where, orderColumn(f.SortBy), strings.ToUpper(f.SortDir), strings.ToUpper(f.SortDir), limit)
+		where, orderColumn(f.SortBy), strings.ToUpper(f.SortDir), strings.ToUpper(f.SortDir),
+		strings.ToUpper(f.SortDir), limit)
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
