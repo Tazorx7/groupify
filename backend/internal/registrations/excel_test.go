@@ -70,7 +70,7 @@ func TestXLSXPreservesLeadingZeroes(t *testing.T) {
 	}
 }
 
-func TestXLSXHasSummaryAndRosterSheets(t *testing.T) {
+func TestXLSXHasSummaryGroupsAndRosterSheets(t *testing.T) {
 	data, err := writeXLSX(sampleExport())
 	if err != nil {
 		t.Fatalf("writeXLSX: %v", err)
@@ -79,8 +79,80 @@ func TestXLSXHasSummaryAndRosterSheets(t *testing.T) {
 	f := openWorkbook(t, data)
 
 	sheets := f.GetSheetList()
-	if len(sheets) != 2 || sheets[0] != xlsxSummarySheet || sheets[1] != xlsxRosterSheet {
-		t.Fatalf("sheets = %v, want [%s %s]", sheets, xlsxSummarySheet, xlsxRosterSheet)
+	want := []string{xlsxSummarySheet, xlsxGroupsSheet, xlsxRosterSheet}
+	if len(sheets) != len(want) {
+		t.Fatalf("sheets = %v, want %v", sheets, want)
+	}
+	for i := range want {
+		if sheets[i] != want[i] {
+			t.Fatalf("sheets = %v, want %v", sheets, want)
+		}
+	}
+}
+
+// The Groups sheet answers "group 1 is these people" directly: a band per
+// topic followed by its students, with occupancy in the band.
+func TestXLSXGroupsSheetBandsEachTopic(t *testing.T) {
+	data, err := writeXLSX(sampleExport())
+	if err != nil {
+		t.Fatalf("writeXLSX: %v", err)
+	}
+
+	f := openWorkbook(t, data)
+	all, err := f.GetRows(xlsxGroupsSheet)
+	if err != nil {
+		t.Fatalf("get groups rows: %v", err)
+	}
+
+	// Drop spacer rows so the assertions are about content, not layout gaps.
+	rows := make([][]string, 0, len(all))
+	for _, row := range all {
+		if len(row) > 0 && row[0] != "" {
+			rows = append(rows, row)
+		}
+	}
+
+	// header, 2 bands, 3 members.
+	if len(rows) != 6 {
+		t.Fatalf("groups rows = %d, want 6: %v", len(rows), rows)
+	}
+	if rows[0][0] != "Full name" || rows[0][1] != "Index number" || rows[0][2] != "Registered at" {
+		t.Fatalf("groups header = %v", rows[0])
+	}
+
+	wantBand1 := "GROUP 1 · Compilers — 2/10 filled · 8 places left"
+	if rows[1][0] != wantBand1 {
+		t.Fatalf("band 1 = %q, want %q", rows[1][0], wantBand1)
+	}
+	// Members sit under their band, in name order.
+	if rows[2][0] != "Ama Mensah" || rows[2][1] != "00123456" {
+		t.Fatalf("member 1 = %v", rows[2])
+	}
+	if rows[3][0] != "Kofi Boateng" || rows[3][1] != "CS/2024/045" {
+		t.Fatalf("member 2 = %v", rows[3])
+	}
+
+	wantBand2 := "GROUP 2 · Distributed Systems — 1/30 filled · 29 places left"
+	if rows[4][0] != wantBand2 {
+		t.Fatalf("band 2 = %q, want %q", rows[4][0], wantBand2)
+	}
+	if rows[5][0] != "Yaa Asantewaa" {
+		t.Fatalf("member 3 = %v", rows[5])
+	}
+
+	// Each band spans the three data columns (rows 2 and 6: band, four rows,
+	// spacer, band).
+	merges, err := f.GetMergeCells(xlsxGroupsSheet)
+	if err != nil {
+		t.Fatalf("get merges: %v", err)
+	}
+	if len(merges) != 2 {
+		t.Fatalf("merges = %d, want 2", len(merges))
+	}
+	for i, want := range []string{"A2", "A6"} {
+		if merges[i].GetStartAxis() != want || merges[i].GetEndAxis() != strings.Replace(want, "A", "C", 1) {
+			t.Fatalf("merge %d = %s:%s", i, merges[i].GetStartAxis(), merges[i].GetEndAxis())
+		}
 	}
 }
 
@@ -178,6 +250,56 @@ func TestXLSXSummaryGroupsByTopic(t *testing.T) {
 	}
 }
 
+func TestXLSXGroupsSheetEmptyTakesTopicOrder(t *testing.T) {
+	at := time.Date(2026, 11, 11, 9, 14, 2, 0, time.UTC)
+	data := &ExportData{
+		// Deliberately interleaved, as a date-sorted export would be.
+		Rows: []AdminRegistration{
+			{FullName: "Zoe Mensah", IndexNumber: "3", TopicName: "Compilers", CreatedAt: at},
+			{FullName: "Ama Boateng", IndexNumber: "1", TopicName: "Distributed Systems", CreatedAt: at},
+			{FullName: "Kofi Adjei", IndexNumber: "2", TopicName: "Compilers", CreatedAt: at},
+		},
+		Topics: []TopicSummary{
+			{Name: "Compilers", Capacity: 5},
+			{Name: "Distributed Systems", Capacity: 5},
+		},
+	}
+
+	raw, err := writeXLSX(data)
+	if err != nil {
+		t.Fatalf("writeXLSX: %v", err)
+	}
+	f := openWorkbook(t, raw)
+	all, err := f.GetRows(xlsxGroupsSheet)
+	if err != nil {
+		t.Fatalf("get groups rows: %v", err)
+	}
+
+	rows := make([][]string, 0, len(all))
+	for _, row := range all {
+		if len(row) > 0 && row[0] != "" {
+			rows = append(rows, row)
+		}
+	}
+
+	want := []string{
+		"Full name",
+		"GROUP 1 · Compilers — 2/5 filled · 3 places left",
+		"Kofi Adjei",
+		"Zoe Mensah",
+		"GROUP 2 · Distributed Systems — 1/5 filled · 4 places left",
+		"Ama Boateng",
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("groups rows = %v, want %v", rows, want)
+	}
+	for i := range want {
+		if rows[i][0] != want[i] {
+			t.Fatalf("groups row %d = %q, want %q", i, rows[i][0], want[i])
+		}
+	}
+}
+
 func TestXLSXEmptyExportStillHasHeader(t *testing.T) {
 	data, err := writeXLSX(&ExportData{})
 	if err != nil {
@@ -201,6 +323,14 @@ func TestXLSXEmptyExportStillHasHeader(t *testing.T) {
 	// Header + a zeroed totals row.
 	if len(summary) != 2 || summary[1][0] != "TOTAL" || summary[1][1] != "0" {
 		t.Fatalf("summary rows = %v", summary)
+	}
+
+	groups, err := f.GetRows(xlsxGroupsSheet)
+	if err != nil {
+		t.Fatalf("get groups rows: %v", err)
+	}
+	if len(groups) != 1 || groups[0][0] != "Full name" {
+		t.Fatalf("groups rows = %v, want just the header", groups)
 	}
 }
 
